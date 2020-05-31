@@ -137,7 +137,7 @@ def score(x, y, fwd_mean, bwd_mean, margin):
     # , it means that assigning high score between x and y may not be so convincing.
 
 
-def score_candidates(x, y, candidate_inds, fwd_mean, bwd_mean, margin, verbose=False, include_perfect_match=False):
+def score_candidates(x, y, z, candidate_inds, fwd_mean, bwd_mean, margin, verbose=False, include_perfect_match=False):
     if verbose:
         print(' - scoring {:d} candidates'.format(x.shape[0]))
     scores = np.zeros(candidate_inds.shape)
@@ -145,8 +145,16 @@ def score_candidates(x, y, candidate_inds, fwd_mean, bwd_mean, margin, verbose=F
         for j in range(scores.shape[1]):
             k = candidate_inds[i, j]
             scores[i, j] = score(x[i], y[k], fwd_mean[i], bwd_mean[k], margin)
-            if not include_perfect_match and (x[i] == y[k]).all():
-                scores[i, j] = -float('inf')
+
+            if not include_perfect_match:
+                flag = False
+                if z is None:    # when matching tms
+                    if (x[i] == y[k]).all(): flag = True
+                else:    # when matching tmt
+                    if (x[i] == z[k]).all() or (z[i] == y[k]).all(): flag = True
+                if flag:
+                    scores[i, j] = -float('inf')
+
     return scores
 
 ###############################################################################
@@ -178,29 +186,29 @@ if __name__ == '__main__':
     parser.add_argument('trg',
         help='Target language corpus')
     parser.add_argument('--encoding', default='utf-8',
-        help='Character encoding for input/output')
-    parser.add_argument('--src-lang', required=True,
-        help='Source language id')
-    parser.add_argument('--trg-lang', required=True,
-        help='Target language id')
+        help='Character encoding for input/output. DEFAULT: utf-8')
+    # parser.add_argument('--src-lang', required=True,
+    #     help='Source language id')
+    # parser.add_argument('--trg-lang', required=True,
+    #     help='Target language id')
     parser.add_argument('--output', required=True,
         help='Output file')
-    parser.add_argument('--threshold', type=float, default=0,
-        help='Threshold on extracted bitexts')
+    # parser.add_argument('--threshold', type=float, default=0,
+    #     help='Threshold on extracted bitexts. DEFAULT: 0')
 
     # mining params
     parser.add_argument('--mode',
-        choices=['search', 'score', 'mine'], required=True,
-        help='Execution mode')
+        choices=['search', 'score', 'mine'], default='mine',
+        help='Execution mode. DEFAULT: mine')
     parser.add_argument('-k', '--neighborhood',
         type=int, default=4,
-        help='Neighborhood size')
+        help='Neighborhood size. DEFAULT: 4')
     parser.add_argument('--margin',
         choices=['absolute', 'distance', 'ratio'], default='ratio',
-        help='Margin function')
+        help='Margin function. DEFAULT: ratio')
     parser.add_argument('--retrieval',
         choices=['fwd', 'bwd', 'max', 'intersect'], default='max',
-        help='Retrieval strategy')
+        help='Retrieval strategy. DEFAULT: max')
     parser.add_argument('--unify', action='store_true',
         help='Unify texts')
     parser.add_argument('--gpu', action='store_true',
@@ -213,8 +221,17 @@ if __name__ == '__main__':
         help='Precomputed source sentence embeddings')
     parser.add_argument('--trg-embeddings', required=True,
         help='Precomputed target sentence embeddings')
-    parser.add_argument('--dim', type=int, default=1024,
-        help='Embedding dimensionality')
+    ############################
+    # modification 20200530
+    ############################
+    parser.add_argument('--cmp-embeddings', default=None,
+        help='Specify tms embeddings when matching tmt in order to exclude perfect matches.\n'
+             'If not specified, will be set as --trg-embedding(which means matching tms)')
+    ############################
+    # end modification
+    ############################
+    parser.add_argument('--dim', type=int, default=512,
+        help='Embedding dimensionality. DEFAULT: 512')
 
     #########################
     # modification 20200530
@@ -250,6 +267,20 @@ if __name__ == '__main__':
     if args.unify:
         y = unique_embeddings(y, trg_inds, args.verbose)
     faiss.normalize_L2(y)
+
+    ###########################
+    # modification 20200531
+    ###########################
+    if args.cmp_embeddings is None:
+        z = y
+    else:
+        z = EmbedLoad(args.cmp_embeddings, args.dim, verbose=args.verbose)
+        assert not args.unify
+        faiss.normalize_L2(z)
+    assert z.shape == y.shape
+    ###########################
+    # end modification
+    ###########################
 
     # calculate knn in both directions
     if args.retrieval is not 'bwd':
@@ -297,9 +328,9 @@ if __name__ == '__main__':
         if args.verbose:
             print(' - mining for parallel data')
 
-        # note: a modification for the consine similarity considering the forward/backward mean
-        fwd_scores = score_candidates(x, y, x2y_ind, x2y_mean, y2x_mean, margin, args.verbose, args.include_perfect_match)
-        bwd_scores = score_candidates(y, x, y2x_ind, y2x_mean, x2y_mean, margin, args.verbose, args.include_perfect_match)
+        # NOTE: a modification for the consine similarity considering the forward/backward mean
+        fwd_scores = score_candidates(x, y, z, x2y_ind, x2y_mean, y2x_mean, margin, args.verbose, args.include_perfect_match)
+        bwd_scores = score_candidates(y, x, z, y2x_ind, y2x_mean, x2y_mean, margin, args.verbose, args.include_perfect_match)
 
         #######################################
         # modification 20200530
@@ -312,8 +343,8 @@ if __name__ == '__main__':
 
         if args.verbose:
             print(' - writing alignments to {:s}'.format(args.output))
-            if args.threshold > 0:
-                print(' - with threshold of {:f}'.format(args.threshold))
+            # if args.threshold > 0:
+            #     print(' - with threshold of {:f}'.format(args.threshold))
 
         assert args.retrieval == 'max'
         if args.retrieval == 'max':
@@ -327,8 +358,8 @@ if __name__ == '__main__':
             scores = np.concatenate([fwd_best_scores.flatten(), bwd_best_scores.flatten()])
             res = defaultdict(dict)
             for i, (src_ind, trg_ind) in enumerate(indices):
-                if scores[i] < args.threshold:
-                    continue
+                # if scores[i] < args.threshold:
+                #     continue
                 if trg_ind not in res[src_ind] or res[src_ind][trg_ind] < scores[i]:
                     res[src_ind][trg_ind] = scores[i]
 

@@ -137,7 +137,7 @@ def score(x, y, fwd_mean, bwd_mean, margin):
     # , it means that assigning high score between x and y may not be so convincing.
 
 
-def score_candidates(x, y, candidate_inds, fwd_mean, bwd_mean, margin, verbose=False):
+def score_candidates(x, y, candidate_inds, fwd_mean, bwd_mean, margin, verbose=False, include_perfect_match=False):
     if verbose:
         print(' - scoring {:d} candidates'.format(x.shape[0]))
     scores = np.zeros(candidate_inds.shape)
@@ -145,6 +145,8 @@ def score_candidates(x, y, candidate_inds, fwd_mean, bwd_mean, margin, verbose=F
         for j in range(scores.shape[1]):
             k = candidate_inds[i, j]
             scores[i, j] = score(x[i], y[k], fwd_mean[i], bwd_mean[k], margin)
+            if not include_perfect_match and (x[i] == y[k]).all():
+                scores[i, j] = -float('inf')
     return scores
 
 ###############################################################################
@@ -165,6 +167,11 @@ def topk(array, k):
 ###############################################################################
 
 if __name__ == '__main__':
+
+    input('NOTICE: src & trg in this script not necessarily means semantic source or target side'
+          'in a translation setting.\nSource here indicates the original corpus which needs to find'
+          'fuzzy matches.\nTarget here indicates the translation memory corpus.')
+
     parser = argparse.ArgumentParser(description='LASER: Mine bitext')
     parser.add_argument('src',
         help='Source language corpus')
@@ -208,6 +215,15 @@ if __name__ == '__main__':
         help='Precomputed target sentence embeddings')
     parser.add_argument('--dim', type=int, default=1024,
         help='Embedding dimensionality')
+
+    #########################
+    # modification 20200530
+    #########################
+    parser.add_argument('--include-perfect-match', action='store_true', default=False)
+    #########################
+    # end modification
+    #########################
+
     args = parser.parse_args()
 
     print('LASER: tool to search, score or mine bitexts')
@@ -282,8 +298,8 @@ if __name__ == '__main__':
             print(' - mining for parallel data')
 
         # note: a modification for the consine similarity considering the forward/backward mean
-        fwd_scores = score_candidates(x, y, x2y_ind, x2y_mean, y2x_mean, margin, args.verbose)
-        bwd_scores = score_candidates(y, x, y2x_ind, y2x_mean, x2y_mean, margin, args.verbose)
+        fwd_scores = score_candidates(x, y, x2y_ind, x2y_mean, y2x_mean, margin, args.verbose, args.include_perfect_match)
+        bwd_scores = score_candidates(y, x, y2x_ind, y2x_mean, x2y_mean, margin, args.verbose, args.include_perfect_match)
 
         #######################################
         # modification 20200530

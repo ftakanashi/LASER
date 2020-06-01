@@ -176,7 +176,7 @@ def topk(array, k):
 
 if __name__ == '__main__':
 
-    input('NOTICE: src & trg in this script not necessarily means semantic source or target side'
+    print('NOTICE: src & trg in this script not necessarily means semantic source or target side'
           'in a translation setting.\nSource here indicates the original corpus which needs to find'
           'fuzzy matches.\nTarget here indicates the translation memory corpus.')
 
@@ -271,13 +271,13 @@ if __name__ == '__main__':
     ###########################
     # modification 20200531
     ###########################
-    if args.cmp_embeddings is None:
-        z = y
-    else:
+    if args.cmp_embeddings is None:    # matching tms
+        z = None
+    else:    # matching tmt
         z = EmbedLoad(args.cmp_embeddings, args.dim, verbose=args.verbose)
         assert not args.unify
         faiss.normalize_L2(z)
-    assert z.shape == y.shape
+        assert z.shape == y.shape
     ###########################
     # end modification
     ###########################
